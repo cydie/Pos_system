@@ -1,0 +1,322 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  pin       String
+  role      String   // admin, manager, cashier
+  branchId  Int
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sales         Sale[]
+  activityLogs  ActivityLog[]
+
+  @@unique([pin, role])
+  @@map("users")
+}
+
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  address   String
+  phone     String
+  taxRate   Float    @default(0.1) // Default 10% tax rate
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users     User[]
+  sales     Sale[]
+  inventory Inventory[]
+  expenses  Expense[]
+
+  @@map("branches")
+}
+
+model Product {
+  id               Int      @id @default(autoincrement())
+  name             String
+  sku              String   @unique
+  barcode          String?  @unique
+  price            Float
+  cost             Float
+  category         String
+  stock            Int      @default(0)
+  lowStockWarning  Int      @default(10)
+  description      String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  saleItems        SaleItem[]
+  inventory        Inventory[]
+  stockMovements   StockMovement[]
+
+  @@map("products")
+}
+
+model Sale {
+  id            Int      @id @default(autoincrement())
+  subtotal      Float
+  tax           Float
+  discount      Float    @default(0)
+  total         Float
+  paymentMethod String   // cash, card, split
+  cashReceived  Float?
+  cardAmount    Float?
+  change        Float?
+  status        String   @default("completed") // completed, refunded, cancelled
+  userId        Int
+  branchId      Int
+  customerId    Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user     User        @relation(fields: [userId], references: [id])
+  branch   Branch      @relation(fields: [branchId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  items    SaleItem[]
+
+  @@map("sales")
+}
+
+model SaleItem {
+  id        Int     @id @default(autoincrement())
+  saleId    Int
+  productId Int
+  quantity  Int
+  price     Float   // Price at time of sale
+  discount  Float   @default(0) // Item-level discount percentage
+  subtotal  Float   // Calculated: (price * quantity) * (1 - discount/100)
+
+  // Relations
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("sale_items")
+}
+
+model Customer {
+  id            Int      @id @default(autoincrement())
+  name          String
+  email         String   @unique
+  phone         String
+  address       String?
+  loyaltyPoints Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  sales Sale[]
+
+  @@map("customers")
+}
+
+model Inventory {
+  id        Int @id @default(autoincrement())
+  productId Int
+  branchId  Int
+  quantity  Int @default(0)
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  @@unique([productId, branchId])
+  @@map("inventory")
+}
+
+model StockMovement {
+  id          Int      @id @default(autoincrement())
+  productId   Int
+  branchId    Int
+  type        String   // in, out, adjustment, transfer
+  quantity    Int      // Positive for in/adjustment up, negative for out/adjustment down
+  reason      String?
+  reference   String?  // Reference to sale ID, transfer ID, etc.
+  userId      Int?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("stock_movements")
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  branchId    Int
+  category    String   // utilities, supplies, wages, rent, etc.
+  description String
+  amount      Float
+  date        DateTime
+  receipt     String?  // File path or URL to receipt image
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@map("expenses")
+}
+
+model Settings {
+  id              Int     @id @default(autoincrement())
+  key             String  @unique
+  value           String
+  description     String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model ActivityLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  action    String   // login, logout, sale, refund, stock_adjustment, etc.
+  details   String?  // JSON string with additional details
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("activity_logs")
+}
+
+model SyncQueue {
+  id        Int      @id @default(autoincrement())
+  tableName String
+  recordId  Int
+  action    String   // create, update, delete
+  data      String   // JSON string of the data
+  status    String   @default("pending") // pending, synced, failed
+  attempts  Int      @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+  syncedAt  DateTime?
+
+  @@map("sync_queue")
+}
+
+model Promotion {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  type        String   // percentage, fixed_amount, buy_x_get_y
+  value       Float    // Discount percentage or fixed amount
+  minAmount   Float?   // Minimum purchase amount
+  maxDiscount Float?   // Maximum discount amount
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("promotions")
+}
+
+model TaxRate {
+  id          Int     @id @default(autoincrement())
+  name        String
+  rate        Float   // Tax rate as decimal (0.1 for 10%)
+  isDefault   Boolean @default(false)
+  isActive    Boolean @default(true)
+  description String?
+
+  @@map("tax_rates")
+}
+
+model PaymentMethod {
+  id          Int     @id @default(autoincrement())
+  name        String  @unique
+  isActive    Boolean @default(true)
+  requiresCash Boolean @default(false)
+  description String?
+
+  @@map("payment_methods")
+}
+
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  name      String
+  contact   String?
+  email     String?
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id         Int      @id @default(autoincrement())
+  orderNumber String  @unique
+  supplierId Int?
+  status     String   @default("pending") // pending, ordered, received, cancelled
+  subtotal   Float
+  tax        Float
+  total      Float
+  orderDate  DateTime @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  items PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              Int     @id @default(autoincrement())
+  purchaseOrderId Int
+  productId       Int
+  quantity        Int
+  unitCost        Float
+  totalCost       Float
+  receivedQty     Int     @default(0)
+
+  // Relations
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_order_items")
+}
+
+model Shift {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  branchId    Int
+  startTime   DateTime @default(now())
+  endTime     DateTime?
+  startCash   Float    @default(0)
+  endCash     Float?
+  totalSales  Float    @default(0)
+  totalTax    Float    @default(0)
+  salesCount  Int      @default(0)
+  status      String   @default("active") // active, closed
+  notes       String?
+
+  @@map("shifts")
+}
